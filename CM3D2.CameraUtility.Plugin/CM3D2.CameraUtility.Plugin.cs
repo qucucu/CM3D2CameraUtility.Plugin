@@ -212,6 +212,8 @@ namespace CM3D2.CameraUtility.Plugin
                 public KeyCode cameraFoVMinus = KeyCode.Equals;
                 [Description("カメラ 視野初期化 (初期値 Semicolon は日本語キーボードでは [: * け])")]
                 public KeyCode cameraFoVInitialize = KeyCode.Semicolon;
+                [Description("ブレ軽減オン／オフ切り替え (トグル)")]
+                public KeyCode cameraAntiShakeToggle = KeyCode.R;
 
                 //こっち見てキー設定
                 [Description("こっち見て／通常切り替え (トグル)")]
@@ -230,8 +232,14 @@ namespace CM3D2.CameraUtility.Plugin
                 public KeyCode cameraNormalModeToggle = KeyCode.D;
                 [Description("女一人称視点切り替え (ループ)")]
                 public KeyCode cameraMaidFPSModeToggle = KeyCode.S;
-                [Description("ブレ軽減オン／オフ切り替え (トグル)")]
-                public KeyCode cameraAntiShakeToggle = KeyCode.R;
+
+                //視点調整キー
+                [Description("顔に視点合わせる(ループ)")]
+                public KeyCode cameraTrackingFace = KeyCode.V;
+                [Description("胸に視点合わせる(ループ)")]
+                public KeyCode cameraTrackingMune = KeyCode.C;
+                [Description("股に視点合わせる(ループ)")]
+                public KeyCode cameraTrackingMata = KeyCode.X;
 
                 //モディファイアキー設定 
                 [Description("低速移動モード (押下中は移動速度が減少)\n設定値: Shift, Alt, Ctrl")]
@@ -298,6 +306,8 @@ namespace CM3D2.CameraUtility.Plugin
 
                 [Description("FPSモード ブレ軽減時カメラ移動速度")]
                 public float fpsCameraShakeLerp = 0.7f;
+                [Description("タップモード オン／オフ")]
+                public bool fpsMultiTap = true;
             }
 
             [Description("CM3D2.CameraUtility.Plugin 設定ファイル\n\n"
@@ -324,6 +334,11 @@ namespace CM3D2.CameraUtility.Plugin
         private GameObject uiObject;
         private GameObject profilePanel;
         private FPSModeBase fpsMode;
+        private Tapper manTap;
+        private Tapper maidTap;
+        private Tapper faceTap;
+        private Tapper muneTap;
+        private Tapper mataTap;
 
         //状態フラグ
         private bool isOVR = false;
@@ -414,17 +429,22 @@ namespace CM3D2.CameraUtility.Plugin
                 utility.fpsMode = new NormalMode(utility);
             }
 
-            public virtual void KeyDownManFPS()
+            public virtual void KeyDownManFPS(int n)
             {
                 utility.Log("CameraMode: FPS/Man");
-                utility.fpsMode = new ManFPSMode(utility);
+                utility.fpsMode = new ManFPSMode(utility, n);
             }
 
-            public virtual void KeyDownMaidFPS()
+            public virtual void KeyDownMaidFPS(int n)
             {
                 utility.Log("CameraMode: FPS/Maid");
                 VisibleAllManHead();
-                utility.fpsMode = new MaidFPSMode(utility);
+                utility.fpsMode = new MaidFPSMode(utility, n);
+            }
+
+            public virtual bool IsTargetMan
+            {
+                get;
             }
 
             public abstract YieldInstruction Update();
@@ -474,16 +494,21 @@ namespace CM3D2.CameraUtility.Plugin
             {
             }
 
-            public override void KeyDownManFPS()
+            public override void KeyDownManFPS(int n)
             {
                 utility.SaveCameraPos();
-                base.KeyDownManFPS();
+                base.KeyDownManFPS(n);
             }
 
-            public override void KeyDownMaidFPS()
+            public override void KeyDownMaidFPS(int n)
             {
                 utility.SaveCameraPos();
-                base.KeyDownMaidFPS();
+                base.KeyDownMaidFPS(n);
+            }
+
+            public override bool IsTargetMan
+            {
+                get { return false; }
             }
         }
 
@@ -495,8 +520,9 @@ namespace CM3D2.CameraUtility.Plugin
             private GameObject head;
             private bool isAfterFading = false;
 
-            public ManFPSMode(CameraUtility utility) : base(utility)
+            public ManFPSMode(CameraUtility utility, int n) : base(utility)
             {
+                this.targetNumber = n;
             }
 
             public override YieldInstruction Update()
@@ -523,7 +549,8 @@ namespace CM3D2.CameraUtility.Plugin
 
                     if (!head || !man || !man.Visible)
                     {
-                        FindNextTarget();
+                        utility.Log("Not Found ManHead");
+                        KeyDownNormal();
                         return new WaitForSeconds(stateCheckInterval);
                     }
                 }
@@ -532,7 +559,7 @@ namespace CM3D2.CameraUtility.Plugin
                 {
                     var nextPos = CalculateNextPos();
                     utility.MoveCamera(nextPos, utility.isShakeCorrection);
-                    utility.ResetCameraAtManHead(head);
+                    utility.ResetRotationAtManHead(head);
                     this.isFirst = false;
                 }
                 else
@@ -543,7 +570,7 @@ namespace CM3D2.CameraUtility.Plugin
                     // カメラが大きく動いたとき
                     if (!utility.IsNear(currentPos, nextPos))
                     {
-                        utility.ResetCameraAtManHead(head);
+                        utility.ResetRotationAtManHead(head);
                     }
 
                     utility.MoveCamera(nextPos, utility.isShakeCorrection);
@@ -560,25 +587,6 @@ namespace CM3D2.CameraUtility.Plugin
                      - head.transform.up * config.Camera.manFpsOffsetForward
                      + head.transform.right * config.Camera.manFpsOffsetRight
                      + head.transform.forward * config.Camera.manFpsOffsetUp;
-            }
-
-            private void FindNextTarget()
-            {
-                var manCount = GameMain.Instance.CharacterMgr.GetManCount();
-                for (int offset = 1; offset <= manCount; offset++)
-                {
-                    var next = (targetNumber + offset) % manCount;
-                    var man = utility.GetVisibleMan(next);
-                    if (man)
-                    {
-                        this.targetNumber = next;
-                        ChangeManHead(targetNumber);
-                        return;
-                    }
-
-                }
-                utility.Log("Not Found ManHead");
-                KeyDownNormal();
             }
 
             private void ChangeManHead(int number)
@@ -643,7 +651,7 @@ namespace CM3D2.CameraUtility.Plugin
 
                 Camera.main.fieldOfView = utility.config.Camera.fpsModeFoV;
                 utility.DisableEyeToCamera();
-                utility.ResetCameraAtManHead(head);
+                utility.ResetRotationAtManHead(head);
 
                 if (utility.config.Camera.manFpsHeadHidden)
                 {
@@ -651,9 +659,9 @@ namespace CM3D2.CameraUtility.Plugin
                 }
             }
 
-            public override void KeyDownManFPS()
+            public override bool IsTargetMan
             {
-                FindNextTarget();
+                get { return false; }
             }
         }
 
@@ -665,8 +673,9 @@ namespace CM3D2.CameraUtility.Plugin
             private GameObject head;
             private bool isAfterFading = false;
 
-            public MaidFPSMode(CameraUtility utility) : base(utility)
+            public MaidFPSMode(CameraUtility utility, int n) : base(utility)
             {
+                this.targetNumber = n;
             }
 
             public override YieldInstruction Update()
@@ -693,7 +702,8 @@ namespace CM3D2.CameraUtility.Plugin
 
                     if (!head || !maid || !maid.Visible)
                     {
-                        FindNextTarget();
+                        utility.Log("Not Found MaidHead");
+                        KeyDownNormal();
                         return new WaitForSeconds(stateCheckInterval);
                     }
                 }
@@ -702,7 +712,7 @@ namespace CM3D2.CameraUtility.Plugin
                 {
                     var nextPos = CalculateNextPos();
                     utility.MoveCamera(nextPos, utility.isShakeCorrection);
-                    utility.ResetCameraAtMaidHead(head);
+                    utility.ResetRotationAtMaidHead(head);
                     this.isFirst = false;
                 }
                 else
@@ -713,7 +723,7 @@ namespace CM3D2.CameraUtility.Plugin
                     // カメラが大きく動いたとき
                     if (!utility.IsNear(currentPos, nextPos))
                     {
-                        utility.ResetCameraAtMaidHead(head);
+                        utility.ResetRotationAtMaidHead(head);
                     }
 
                     utility.MoveCamera(nextPos, utility.isShakeCorrection);
@@ -729,25 +739,6 @@ namespace CM3D2.CameraUtility.Plugin
                     + head.transform.up * config.Camera.maidFpsOffsetUp
                     - head.transform.right * config.Camera.maidFpsOffsetForward
                     - head.transform.forward * config.Camera.maidFpsOffsetRight;
-            }
-
-            private void FindNextTarget()
-            {
-                var maidCount = GameMain.Instance.CharacterMgr.GetMaidCount();
-                for (int offset = 1; offset <= maidCount; offset++)
-                {
-                    var next = (targetNumber + offset) % maidCount;
-                    var maid = utility.GetVisibleMaid(next);
-                    if (maid)
-                    {
-                        this.targetNumber = next;
-                        ChangeMaidHead(targetNumber);
-                        return;
-                    }
-
-                }
-                utility.Log("Not Found MaidHead");
-                KeyDownNormal();
             }
 
             private void ChangeMaidHead(int number)
@@ -795,12 +786,12 @@ namespace CM3D2.CameraUtility.Plugin
             {
                 Camera.main.fieldOfView = utility.config.Camera.fpsModeFoV;
                 utility.DisableEyeToCamera();
-                utility.ResetCameraAtMaidHead(head);
+                utility.ResetRotationAtMaidHead(head);
             }
 
-            public override void KeyDownMaidFPS()
+            public override bool IsTargetMan
             {
-                FindNextTarget();
+                get { return true; }
             }
         }
 
@@ -847,7 +838,28 @@ namespace CM3D2.CameraUtility.Plugin
             isShakeCorrection = false;
             fpsMode = new NormalMode(this);
 
+            var manCount = GameMain.Instance.CharacterMgr.GetManCount();
+            var maidCount = GameMain.Instance.CharacterMgr.GetMaidCount();
+            var largeCount = manCount < maidCount ? maidCount : manCount;
+            this.manTap = CreateTapper(manCount);
+            this.maidTap = CreateTapper(maidCount);
+            this.faceTap = CreateTapper(largeCount);
+            this.muneTap = CreateTapper(largeCount);
+            this.mataTap = CreateTapper(largeCount);
+
             return maid && maidTransform && bg && mainCamera;
+        }
+
+        private Tapper CreateTapper(int max)
+        {
+            if (config.Camera.fpsMultiTap)
+            {
+                return new MultiTapper(max);
+            }
+            else
+            {
+                return new SingleTapper(max);
+            }
         }
 
         private void StartMainCoroutines()
@@ -856,6 +868,10 @@ namespace CM3D2.CameraUtility.Plugin
             if ((isChuBLip && EnableFpsScenesChuB.Contains(sceneLevel)) || EnableFpsScenes.Contains(sceneLevel))
             {
                 mainCoroutines.AddLast(StartCoroutine(FirstPersonCameraCoroutine()));
+                if (!isOVR)
+                {
+                    mainCoroutines.AddLast(StartCoroutine(TrackingCameraCoroutine()));
+                }
             }
 
             // Start LookAtThis
@@ -910,7 +926,7 @@ namespace CM3D2.CameraUtility.Plugin
         private void SaveCameraPos()
         {
             Assert.IsNotNull(mainCamera);
-            Debug.Log("Save " + mainCamera.GetPos());
+            Log("Save Camera " + mainCamera.GetPos());
             this.cameraMement = new CameraMement(mainCamera);
         }
 
@@ -1157,6 +1173,22 @@ namespace CM3D2.CameraUtility.Plugin
             return FindByNameInChildren(mhead, "ManHead");
         }
 
+        private GameObject FindManMune(Maid man)
+        {
+            if (!man.body0.isLoadedBody)
+                return null;
+
+            return man.body0.Spine1a.gameObject;
+        }
+
+        private GameObject FindManMata(Maid maid)
+        {
+            if (!maid.body0.isLoadedBody)
+                return null;
+            
+            return maid.body0.trManChinko.gameObject;
+        }
+
         private GameObject FindMaidHead(Maid maid)
         {
             if (!maid.body0.isLoadedBody)
@@ -1169,6 +1201,22 @@ namespace CM3D2.CameraUtility.Plugin
                 return null;
 
             return FindByNameInChildren(face, "Bone_Face");
+        }
+
+        private GameObject FindMaidMune(Maid maid)
+        {
+            if (!maid.body0.isLoadedBody)
+                return null;
+
+            return maid.body0.Spine1a.gameObject;
+        }
+
+        private GameObject FindMaidMata(Maid maid)
+        {
+            if (!maid.body0.isLoadedBody)
+                return null;
+
+            return maid.body0.Pelvis.gameObject;
         }
 
         private GameObject FindByNameInChildren(GameObject parent, string name)
@@ -1200,16 +1248,31 @@ namespace CM3D2.CameraUtility.Plugin
             return null;
         }
 
-        private void ResetCameraAtManHead(GameObject headAtNewPos)
+        private void ResetRotationAtManHead(GameObject headAtNewPos)
         {
-            var rotation = -headAtNewPos.transform.up;
+            ResetRotation(-headAtNewPos.transform.up);
+        }
+
+        private void ResetRotationAtMaidHead(GameObject headAtNewPos)
+        {
+            ResetRotation(-headAtNewPos.transform.right);
+        }
+
+        private void ResetRotation(Vector3 rotation)
+        {
             mainCamera.transform.rotation = Quaternion.LookRotation(rotation);
         }
 
-        private void ResetCameraAtMaidHead(GameObject headAtNewPos)
+        private void LookAt(Vector3 targetPosition)
         {
-            var rotation = -headAtNewPos.transform.right;
-            mainCamera.transform.rotation = Quaternion.LookRotation(rotation);
+            var oldTarget = mainCamera.GetTargetPos();
+            var oldDistance = mainCamera.GetDistance();
+            mainCamera.SetPos(mainCamera.GetPos());
+            mainCamera.SetTargetPos(mainCamera.GetPos(), true);
+            mainCamera.SetDistance(0f, true);
+            ResetRotation(targetPosition - mainCamera.GetPos());
+            mainCamera.SetTargetPos(targetPosition, true);
+            mainCamera.SetDistance(oldDistance, true);
         }
 
         private void MoveCamera(Vector3 nextCameraPos, bool isLerp)
@@ -1281,16 +1344,136 @@ namespace CM3D2.CameraUtility.Plugin
                 // 男視点切り替え
                 if (Input.GetKeyDown(Keys.cameraManFPSModeToggle))
                 {
-                    fpsMode.KeyDownManFPS();
+                    manTap.On();
+                    var next = FindNextManTarget(manTap.Count);
+                    fpsMode.KeyDownManFPS(next);
+                    manTap.SetCount(next);
                 }
                 // 女視点切り替え
                 if (Input.GetKeyDown(Keys.cameraMaidFPSModeToggle))
                 {
-                    fpsMode.KeyDownMaidFPS();
+                    maidTap.On();
+                    var next = FindNextMaidTarget(maidTap.Count);
+                    fpsMode.KeyDownMaidFPS(next);
+                    maidTap.SetCount(next);
                 }
                 // 更新
                 yield return fpsMode.Update();
             }
+        }
+
+        private IEnumerator TrackingCameraCoroutine()
+        {
+            while (true)
+            {
+                while (!AllowUpdate)
+                {
+                    yield return new WaitForSeconds(stateCheckInterval);
+                }
+                // 顔トラッキング切り替え
+                if (Input.GetKeyDown(Keys.cameraTrackingFace))
+                {
+                    faceTap.On();
+
+                    var next = FindNextMaidTarget(faceTap.Count);
+                    faceTap.SetCount(next);
+                    Log("Look At Face: " + next);
+
+                    GameObject target;
+                    if (fpsMode.IsTargetMan)
+                    {
+                        var man = GetVisibleMan(next);
+                        target = FindManHead(man);
+                    }
+                    else
+                    {
+                        var maid = GetVisibleMaid(next);
+                        target = FindMaidHead(maid);
+                    }
+                    
+                    LookAt(target.transform.position);
+                }
+                // 胸トラッキング切り替え
+                if (Input.GetKeyDown(Keys.cameraTrackingMune))
+                {
+                    muneTap.On();
+
+                    var next = FindNextMaidTarget(faceTap.Count);
+                    muneTap.SetCount(next);
+                    Log("Look At Mune: " + next);
+
+                    GameObject target;
+                    if (fpsMode.IsTargetMan)
+                    {
+                        var man = GetVisibleMan(next);
+                        target = FindManMune(man);
+                    }
+                    else
+                    {
+                        var maid = GetVisibleMaid(next);
+                        target = FindMaidMune(maid);
+                    }
+
+                    LookAt(target.transform.position);
+                }
+                // 股トラッキング切り替え
+                if (Input.GetKeyDown(Keys.cameraTrackingMata))
+                {
+                    mataTap.On();
+
+                    var next = FindNextMaidTarget(faceTap.Count);
+                    mataTap.SetCount(next);
+                    Log("Look At Mata: " + next);
+
+                    GameObject target;
+                    if (fpsMode.IsTargetMan)
+                    {
+                        var man = GetVisibleMan(next);
+                        target = FindManMata(man);
+                    }
+                    else
+                    {
+                        var maid = GetVisibleMaid(next);
+                        target = FindMaidMata(maid);
+                    }
+
+                    LookAt(target.transform.position);
+                }
+                yield return null;
+            }
+        }
+
+        private int FindNextManTarget(int firstTargetNumber)
+        {
+            var manCount = GameMain.Instance.CharacterMgr.GetManCount();
+            for (int offset = 0; offset < manCount; offset++)
+            {
+                var next = (firstTargetNumber + offset) % manCount;
+                var man = GetVisibleMan(next);
+                if (man && man.Visible)
+                {
+                    return next;
+                }
+            }
+            Log("Not Found ManHead");
+            return -1;
+        }
+
+        private int FindNextMaidTarget(int firstTargetNumber)
+        {
+            var maidCount = GameMain.Instance.CharacterMgr.GetMaidCount();
+            for (int offset = 0; offset < maidCount; offset++)
+            {
+                var next = (firstTargetNumber + offset) % maidCount;
+                var maid = GetVisibleMaid(next);
+                if (maid && maid.Visible)
+                {
+                    return next;
+                }
+
+            }
+            Log("Not Found MaidHead");
+            return -1;
         }
 
         private IEnumerator FloorMoverCoroutine()
@@ -1510,6 +1693,110 @@ namespace CM3D2.CameraUtility.Plugin
         internal bool IsMovedPos(Vector3 currentPos)
         {
             return targetPos != currentPos;
+        }
+    }
+
+    public abstract class Tapper
+    {
+        public abstract int Count
+        {
+            get;
+        }
+
+        public abstract void On();
+
+        public abstract void SetCount(int newCount);
+    }
+
+    public class SingleTapper : Tapper
+    {
+        private int max;
+        private int count = 0;
+        private float lastTime = 0f;
+        private bool isInputted = false;
+
+        public SingleTapper(int max)
+        {
+            this.max = max;
+        }
+
+        public int Max
+        {
+            get { return max; }
+            set { this.max = value; }
+        }
+
+        public override int Count
+        {
+            get { return count; }
+        }
+
+        public bool IsReadable
+        {
+            get { return isInputted && IsFixTap(); }
+        }
+
+        public override void On()
+        {
+            if (max <= count)
+                Reset();
+
+            this.isInputted = true;
+            if (!IsFixTap())
+                count++;
+            else
+                count = 0;
+            this.lastTime = Time.time;
+        }
+
+        public bool IsFixTap()
+        {
+            var now = Time.time;
+            return 0.5f <= now - lastTime;
+        }
+
+        public void Reset()
+        {
+            this.isInputted = false;
+            this.lastTime = 0f;
+        }
+
+        public override void SetCount(int newCount)
+        {
+            this.count = newCount;
+        }
+    }
+
+    public class MultiTapper : Tapper
+    {
+        private int max;
+        private int count;
+
+        public MultiTapper(int max)
+        {
+            this.max = max;
+            this.count = max - 1;
+        }
+
+        public int Max
+        {
+            get { return max; }
+            set { this.max = value; }
+        }
+
+        public override int Count
+        {
+            get { return count; }
+        }
+
+        public override void On()
+        {
+            count = (count + 1) % max;
+        }
+
+        public override void SetCount(int newCount)
+        {
+            this.count = newCount;
         }
     }
 
